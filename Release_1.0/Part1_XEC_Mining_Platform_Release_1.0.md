@@ -79,9 +79,11 @@ The overall XEC platform consists of two logically distinct systems.
 
 The XEC mining platform is the production infrastructure dedicated to eCash solo mining.
 
+`bitcoind-xec` is the Docker deployment of the official eCash Core full node.
+
 Components include:
 
-- Full eCash Node (bitcoind-xec)
+- Full eCash node (`bitcoind-xec`)
 - CKPool Solo
 - Statistics API
 - Status Page
@@ -106,7 +108,7 @@ Components include:
 - Confirmation monitor
 - Blockchain integration
 
-Although hosted on the same VPS, the Notary is intentionally isolated from the mining platform.
+Both systems share the same production VPS while remaining logically independent.
 
 The complete Notary architecture is documented in Volume 3, *XEC Blockchain Notary*.
 
@@ -123,7 +125,7 @@ Every component has one specific responsibility.
 Examples:
 
 - CKPool performs only mining.
-- bitcoind-xec maintains blockchain consensus.
+- `bitcoind-xec` maintains blockchain consensus.
 - Statistics API generates mining statistics.
 - Status Page renders the public interface.
 - Caddy acts only as a reverse proxy.
@@ -162,40 +164,47 @@ Wherever possible, the design favors:
 
 #### Documentation Philosophy
 
-This manual documents the actual production environment.
+This manual documents the deployed production platform as it actually operates; it is not a conceptual reference architecture.
 
-Every configuration shown here is derived from the running infrastructure.
-
-Hypothetical examples are intentionally avoided.
+Every configuration, path, service relationship and operational procedure shown here is derived from the running production infrastructure or verified operational evidence. Hypothetical examples are intentionally excluded.
 
 ---
 
 ## 2. High-Level Architecture
 
-The production platform is composed of two logical environments.
+The production platform is composed of two logical environments with distinct public traffic paths.
 
+```text
+                              Internet
+                                 │
+                ┌────────────────┴────────────────┐
+                │                                 │
+              HTTPS                            Stratum
+                │                                 │
+                ▼                                 ▼
+        +---------------+                 +---------------+
+        |  caddy-btc    |                 |  ckpool-xec   |
+        | HTTPS ingress |                 | Mining server |
+        +-------+-------+                 +-------+-------+
+                │                                 │
+                ▼                                 │ RPC / ZMQ
+   +--------------------------+                   │
+   | HTTPS backend services   |                   │
+   | Status / APIs / Notary   |                   │
+   +------------+-------------+                   │
+                │                                 │
+                │ RPC where required              │
+                └────────────────┬────────────────┘
+                                 ▼
+                         +---------------+
+                         | bitcoind-xec  |
+                         | eCash Core    |
+                         +---------------+
 ```
 
-                    Internet
-                         │
-                HTTPS / Stratum
-                         │
-                  +--------------+
-                  |    Caddy     |
-                  +--------------+
-                   │          │
-                   │          │
-          +--------+          +----------------+
-          │                                  │
-          ▼                                  ▼
+HTTPS traffic is reverse proxied by Caddy to the appropriate backend service. Stratum traffic connects directly to `ckpool-xec` and never passes through Caddy. Backend services interact with `bitcoind-xec` only where their responsibilities require blockchain access.
 
-  XEC Mining Platform              XEC Blockchain Notary
-
-```
-
-The mining infrastructure and the notarization service share only the host machine and the public HTTPS endpoint.
-
-Their internal logic is completely independent.
+The mining platform and Blockchain Notary share the production VPS while remaining logically independent.
 
 ---
 
@@ -203,18 +212,18 @@ Their internal logic is completely independent.
 
 The production mining stack consists of the following services.
 
-| Component | Technology | Purpose |
-|----------|------------|---------|
-| bitcoind-xec | eCash Core | Full blockchain node |
-| ckpool-xec | CKPool | Solo mining server |
-| stats-api-xec | Python | Mining statistics |
-| status-page-xec | NGINX | Public web interface |
-| caddy-btc | Caddy v2 | HTTPS reverse proxy |
+| Component | Technology | Purpose | Availability |
+|---|---|---|---|
+| `bitcoind-xec` | eCash Core | Full blockchain node | Internal RPC and ZMQ |
+| `ckpool-xec` | CKPool | Solo-mining server | Public Stratum endpoints |
+| `stats-api-xec` | Python | Mining statistics | Internal; exposed through Caddy routes |
+| `status-page-xec` | NGINX | Public web interface | Internal; exposed through Caddy |
+| `caddy-btc` | Caddy v2 | HTTPS reverse proxy | Public HTTPS ingress |
 
 Additional utilities include:
 
-- parse_block.py
-- block_notify_xec.sh
+- `parse_block.py`
+- `block_notify_xec.sh`
 - health scripts
 - maintenance utilities
 
@@ -338,8 +347,8 @@ The deployment publishes two Stratum endpoints:
 
 | External port | Internal port | Miner profile |
 |---|---|---|
-| `7333` | `3333` | Standard miners |
-| `7444` | `4444` | High-difficulty profile for high-hashrate miners |
+| `7333` | `3333` | Standard Variable Difficulty endpoint |
+| `7444` | `4444` | High Difficulty endpoint |
 
 ---
 
@@ -367,21 +376,21 @@ The XEC platform relies on external Docker networks.
 
 The CKPool deployment joins:
 
-- xec_miningcore_xec_internal
-- poolnet
+- `xec_miningcore_xec_internal`
+- `poolnet`
 
 The `poolnet` network is particularly important because it provides communication between independently managed Docker projects.
 
 It allows services such as:
 
-- caddy-btc
-- stats-api-xec
-- status-page-xec
+- `caddy-btc`
+- `stats-api-xec`
+- `status-page-xec`
 
 to communicate without belonging to the same Docker Compose project.
 
 This architectural choice keeps the XEC stack independent while allowing shared public infrastructure.
-## 8. bitcoind-xec
+## 8. `bitcoind-xec`
 
 ### 8.1 Purpose
 
@@ -494,6 +503,7 @@ These calls are used by different platform components.
 
 Example:
 
+```text
 CKPool
 
 ↓
@@ -523,6 +533,7 @@ bitcoind-xec
 ↓
 
 Network
+```
 
 ---
 
@@ -677,7 +688,7 @@ Every mining connection terminates inside CKPool.
 
 In addition to CKPool, the following platform components access `bitcoind-xec`.
 
-#### parse_block.py
+#### `parse_block.py`
 
 Uses RPC to verify mined blocks directly on-chain.
 
@@ -688,7 +699,7 @@ Functions:
 
 ---
 
-#### block_notify_xec.sh
+#### `block_notify_xec.sh`
 
 Uses wallet RPC.
 
@@ -887,7 +898,7 @@ tcp://bitcoind-xec:28332
 
 The production environment exposes two public mining ports.
 
-#### Standard miners
+#### Standard Variable Difficulty endpoint
 
 External:
 
@@ -910,7 +921,7 @@ Target users:
 
 ---
 
-#### High-difficulty endpoint
+#### High Difficulty endpoint
 
 External:
 
@@ -1029,8 +1040,8 @@ Solved Block
 If accepted:
 
 - CKPool logs the event;
-- parse_block.py later validates the block independently;
-- block_notify_xec monitors wallet activity;
+- `parse_block.py` later validates the block independently;
+- `block_notify_xec.sh` monitors wallet activity;
 - Telegram notification is generated.
 
 ---
@@ -1238,13 +1249,13 @@ Every solved block follows this sequence.
 
 A miner connects using one of the production endpoints.
 
-Standard miners
+Standard Variable Difficulty endpoint:
 
 ```
 stratum+tcp://xec.lmwpool.com:7333
 ```
 
-High-performance miners
+High Difficulty endpoint:
 
 ```
 stratum+tcp://xec.lmwpool.com:7444
@@ -1379,7 +1390,7 @@ Optimized for:
 - WhatsMiner devices; and
 - enterprise hardware.
 
-Using separate endpoints significantly reduces unnecessary share traffic from high-performance miners.
+Using separate endpoints significantly reduces unnecessary share traffic from miners using the High Difficulty endpoint.
 
 ---
 
@@ -1693,6 +1704,10 @@ This architectural choice avoids maintaining two HTTPS gateways while providing 
 
 Caddy is therefore considered a **shared infrastructure component**, not a Bitcoin-specific service.
 
+Stratum mining traffic never traverses Caddy.
+
+Only HTTPS traffic is reverse proxied through Caddy.
+
 ---
 
 ### 11.2 Production Deployment
@@ -1751,9 +1766,9 @@ poolnet
 
 Shared production network.
 
-The **poolnet** network is the critical element allowing Caddy to communicate with services belonging to different Docker Compose projects.
+The `poolnet` network is the critical element allowing Caddy to communicate with services belonging to different Docker Compose projects.
 
-Without poolnet the XEC services would not be reachable.
+Without `poolnet`, the XEC services would not be reachable through Caddy.
 
 ---
 
@@ -2056,7 +2071,7 @@ Typical failure scenarios include:
 |---|---|
 | Caddy container stopped | HTTPS services are unavailable. |
 | `poolnet` disconnected | XEC containers are unreachable from Caddy. |
-| Invalid Caddyfile | Configuration reload fails. |
+| Invalid `Caddyfile` | Configuration reload fails. |
 | Certificate failure | HTTPS is unavailable. |
 | Backend unavailable | Caddy returns `502 Bad Gateway`. |
 
@@ -2177,7 +2192,7 @@ Mining
 7333
 ```
 
-Standard miners
+Standard Variable Difficulty endpoint
 
 Mining
 
@@ -2185,7 +2200,7 @@ Mining
 7444
 ```
 
-High-hashrate miners
+High Difficulty endpoint
 
 No other XEC services are intentionally published.
 
@@ -2550,7 +2565,7 @@ These three directories contain the primary XEC mining, support-service and Nota
 
 ---
 
-### 13.3 /root/xec_ckpool
+### 13.3 `/root/xec_ckpool`
 
 This directory contains the mining engine.
 
@@ -2579,7 +2594,7 @@ Responsibilities:
 
 ---
 
-### 13.4 docker-compose-ckpool-xec.yml
+### 13.4 `docker-compose-ckpool-xec.yml`
 
 Purpose:
 
@@ -2640,7 +2655,7 @@ These external networks are mandatory for production operation.
 
 ---
 
-### 13.5 ckpool-xec.conf
+### 13.5 `ckpool-xec.conf`
 
 Location:
 
@@ -2731,7 +2746,7 @@ Several utilities consume this log.
 
 ---
 
-### 13.7 /root/xec_miningcore
+### 13.7 `/root/xec_miningcore`
 
 Although the name contains "miningcore", this directory no longer hosts Miningcore for XEC.
 
@@ -2762,7 +2777,7 @@ Responsibilities include:
 
 ---
 
-### 13.8 parse_block.py
+### 13.8 `parse_block.py`
 
 Purpose: independent verification of solved blocks.
 
@@ -2772,17 +2787,7 @@ Input:
 ckpool.log
 ```
 
-Verification
-
-RPC
-
-↓
-
-getblockhash
-
-↓
-
-getblock
+Verification: RPC calls to `getblockhash`, followed by `getblock`.
 
 Output:
 
@@ -2800,7 +2805,7 @@ Only independently verified blocks appear on the public website.
 
 ---
 
-### 13.9 block_notify_xec.sh
+### 13.9 `block_notify_xec.sh`
 
 Purpose:
 
@@ -2919,7 +2924,7 @@ This makes the Caddy configuration part of the XEC production configuration set.
 
 ---
 
-### 13.14 /root/xec_notary
+### 13.14 `/root/xec_notary`
 
 The Blockchain Notary is maintained separately.
 
@@ -3281,13 +3286,10 @@ Market cache (optional).
 
 #### Scripts
 
-parse_block.py
-
-block_notify_xec.sh
-
-maintenance utilities
-
-Binance utilities
+- `parse_block.py`
+- `block_notify_xec.sh`
+- maintenance utilities
+- Binance utilities
 
 ---
 
